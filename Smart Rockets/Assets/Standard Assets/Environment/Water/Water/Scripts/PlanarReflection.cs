@@ -11,7 +11,7 @@ namespace UnityStandardAssets.Water
         public LayerMask reflectionMask;
         public bool reflectSkybox = false;
         public Color clearColor = Color.grey;
-        public String reflectionSampler = "_ReflectionTex";
+        public string reflectionSampler = "_ReflectionTex";
         public float clipPlaneOffset = 0.07F;
 
 
@@ -29,7 +29,7 @@ namespace UnityStandardAssets.Water
 
         Camera CreateReflectionCameraFor(Camera cam)
         {
-            String reflName = gameObject.name + "Reflection" + cam.name;
+            string reflName = gameObject.name + "Reflection" + cam.name;
             GameObject go = GameObject.Find(reflName);
 
             if (!go)

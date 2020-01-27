@@ -2,8 +2,9 @@
 using System.Collections.Generic;
 using UnityEngine;
 using System;
+using System.Linq;
 
-public class MissileControlHard : MonoBehaviour {
+public class MissileControlHardGeneticNeuralNet : MonoBehaviour {
     // Start is called before the first frame update
     [SerializeField]
     public float speed;
@@ -11,8 +12,8 @@ public class MissileControlHard : MonoBehaviour {
     private int count;
     Rigidbody2D rb;
     public bool isReady;
-    public float[] thrusterLeftForces;
-    public float[] thrusterRightForces;
+    public float[,,] weights;
+    public float[] lastWeights;
     public int current;
     public Transform goalTransform;
     public double fitness;
@@ -28,6 +29,7 @@ public class MissileControlHard : MonoBehaviour {
     private bool exploded;
     public int numGenes;
     public float[] crashPos;
+    private int layerMask = ~(1 << 9);
 
 
     void Awake() {
@@ -65,7 +67,7 @@ public class MissileControlHard : MonoBehaviour {
             fitness *= .50;
             crashed = true;
             rb.freezeRotation = true;
-            GetComponentInChildren<MeshRenderer>().enabled = false;
+            GetComponent<MeshRenderer>().enabled = false;
             if (!exploded) {
                 exploded = true;
                 ParticleSystem[] ps = GetComponentsInChildren<ParticleSystem>();
@@ -73,7 +75,7 @@ public class MissileControlHard : MonoBehaviour {
                     child.Stop();
                     child.Clear();
                 }
-                GameObject expl = Instantiate(explosion, transform.position + transform.up * .5f, Quaternion.identity) as GameObject;
+                GameObject expl = Instantiate(explosion, transform.position, Quaternion.identity) as GameObject;
                 Destroy(expl, 1);
             }
         }
@@ -81,7 +83,7 @@ public class MissileControlHard : MonoBehaviour {
             fitness *= 4;
             reachedGoal = true;
             crashed = true;
-            GetComponentInChildren<MeshRenderer>().enabled = false;
+            GetComponent<MeshRenderer>().enabled = false;
             if (!exploded) {
                 exploded = true;
                 ParticleSystem[] ps = GetComponentsInChildren<ParticleSystem>();
@@ -89,25 +91,63 @@ public class MissileControlHard : MonoBehaviour {
                     child.Stop();
                     child.Clear();
                 }
-                GameObject expl = Instantiate(explosion, transform.position + transform.up * .5f, Quaternion.identity) as GameObject;
+                GameObject expl = Instantiate(explosion, transform.position, Quaternion.identity) as GameObject;
                 Destroy(expl, 1);
             }
         }
     }
-
+    float[] normalize(float[] array) {
+        float max = array.Max();
+        float[] nArray = new float[array.Length];
+        for (int i = 0; i < nArray.Length; i++) {
+            nArray[i] = array[i] / max;
+        }
+        return nArray;
+    }
+    double getAngle(float north, float west, float east, float northWest, float northNorthWest, float northWestWest, float northEast, float northNorthEast, float northEastEast) {
+        float[] normalizedArray = normalize(new float[] { north, west, east, northWest, northNorthWest, northWestWest, northEast, northNorthEast, northEastEast });
+        float[] values = new float[9];
+        for (int i = 0; i < 1; i++) {
+            //layer
+            for (int j = 0; j < 9; j++) {
+                //node
+                float value = 0;
+                for (int k = 0; k < 9; k++) {
+                    //weight of node
+                    value += weights[i, j, k] * normalizedArray[k];
+                }
+                values[j] = (float)Math.Tanh(value);
+            }
+            normalizedArray = values;
+            values = new float[9];
+        }
+        float lastValue = 0;
+        for (int k = 0; k < 9; k++) {
+            lastValue += lastWeights[k] * normalizedArray[k];
+        }
+        return Math.Tanh(lastValue) * 180;
+    }
     // Update is called once per frame
     void Update() {
+        RaycastHit2D north = Physics2D.Raycast(transform.position, transform.up, 50, layerMask);
+        RaycastHit2D west = Physics2D.Raycast(transform.position, Quaternion.Euler(0, 0, 90) * transform.up);
+        RaycastHit2D northWest = Physics2D.Raycast(transform.position, Quaternion.Euler(0, 0, 45) * transform.up);
+        RaycastHit2D northNorthWest = Physics2D.Raycast(transform.position, Quaternion.Euler(0, 0, 22.5f) * transform.up);
+        RaycastHit2D northWestWest = Physics2D.Raycast(transform.position, Quaternion.Euler(0, 0, 67.5f) * transform.up);
+        RaycastHit2D east = Physics2D.Raycast(transform.position, Quaternion.Euler(0, 0, -90) * transform.up);
+        RaycastHit2D northEast = Physics2D.Raycast(transform.position, Quaternion.Euler(0, 0, -45) * transform.up);
+        RaycastHit2D northNorthEast = Physics2D.Raycast(transform.position, Quaternion.Euler(0, 0, -22.5f) * transform.up);
+        RaycastHit2D northEastEast = Physics2D.Raycast(transform.position, Quaternion.Euler(0, 0, -67.5f) * transform.up);
+
         if (isReady && !crashed) {
             rb.velocity = transform.up * speed;
-            if (current < numGenes && count % 5 == 0) {
+            if (current < numGenes && count % 5 == 0) { //change range of forces applied on rockets || remove count %10? 
                 current++;  //this runs 50 times in total
             }
             count++;
         }
         if (current < numGenes) {
-            float x = -thrusterLeftForces[current] + thrusterRightForces[current];
-            float y = thrusterLeftForces[current] + thrusterRightForces[current];
-            double angle = Math.Atan2(y, x) * (180 / Math.PI) - 90;
+            double angle = getAngle(north.distance, west.distance, east.distance, northWest.distance, northNorthWest.distance, northWestWest.distance, northEast.distance, northNorthEast.distance, northEastEast.distance);
             Quaternion target = Quaternion.Euler(0, 0, transform.eulerAngles.z + (float)angle);
             transform.rotation = Quaternion.Slerp(transform.rotation, target, Time.deltaTime * slerpRate);
         }
@@ -127,16 +167,18 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[0].position.x + 1) > transform.position.x) {
                 fitnessLevel += 1;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[0] = current;
         } else if (passedMileStones[0]
             && !passedMileStones[1]
             && mileStones[1].position.y < transform.position.y) {
             passedMileStones[1] = true;
             fitnessLevel = 3;
-            if(mileStones[1].position.x < transform.position.x
+            if (mileStones[1].position.x < transform.position.x
             && (mileStones[1].position.x + 1) > transform.position.x) {
                 fitnessLevel += 1;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[1] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -148,6 +190,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[2].position.x + 1) > transform.position.x) {
                 fitnessLevel += 2;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[2] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -160,6 +203,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[3].position.x + 1) > transform.position.x) {
                 fitnessLevel += 2;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[3] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -173,6 +217,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[4].position.x + 1) > transform.position.x) {
                 fitnessLevel += 3;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[4] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -187,6 +232,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[5].position.x + 1) > transform.position.x) {
                 fitnessLevel += 3;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[5] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -202,6 +248,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[6].position.y + 1.25) > transform.position.y) {
                 fitnessLevel += 4;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[6] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -218,6 +265,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[7].position.y + 1.15) > transform.position.y) {
                 fitnessLevel += 4;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[7] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -235,6 +283,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[8].position.y + 1.05) > transform.position.y) {
                 fitnessLevel += 4;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[8] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -252,6 +301,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[9].position.y + 1) < transform.position.y) {
                 fitnessLevel += 5;
             }
+            fitness += fitnessLevel;
             fitnessLevel = 11;
             currentAtMilestone[9] = current;
         } else if (passedMileStones[0]
@@ -272,6 +322,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[10].position.x + 2) > transform.position.x) {
                 fitnessLevel += 5;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[10] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -292,6 +343,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[11].position.x + 1) > transform.position.x) {
                 fitnessLevel += 5;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[11] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -313,6 +365,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[12].position.x + 1) > transform.position.x) {
                 fitnessLevel += 6;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[12] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -335,6 +388,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[13].position.x + 1) > transform.position.x) {
                 fitnessLevel += 6;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[13] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -358,6 +412,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[14].position.x + 1) > transform.position.x) {
                 fitnessLevel += 7;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[14] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -382,6 +437,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[15].position.x + 1) > transform.position.x) {
                 fitnessLevel += 7;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[15] = current;
         } else if (passedMileStones[0]
             && passedMileStones[1]
@@ -407,6 +463,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[16].position.x + 1) > transform.position.x) {
                 fitnessLevel += 8;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[16] = current;
         } else if (passedMileStones[0]
              && passedMileStones[1]
@@ -433,6 +490,7 @@ public class MissileControlHard : MonoBehaviour {
             && (mileStones[17].position.x + 1) > transform.position.x) {
                 fitnessLevel += 10;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[17] = current;
         } else if (passedMileStones[0]
               && passedMileStones[1]
@@ -460,6 +518,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[18].position.x + 1) > transform.position.x) {
                 fitnessLevel += 13;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[18] = current;
         } else if (passedMileStones[0]
                && passedMileStones[1]
@@ -488,6 +547,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[19].position.y + 2) > transform.position.y) {
                 fitnessLevel += 25;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[19] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -517,6 +577,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[20].position.y + 2) > transform.position.y) {
                 fitnessLevel += 30;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[20] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -547,6 +608,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[21].position.x + 2) > transform.position.x) {
                 fitnessLevel += 63;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[21] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -578,6 +640,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[22].position.x + 1) > transform.position.x) {
                 fitnessLevel += 65;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[22] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -610,6 +673,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[23].position.x + 1) > transform.position.x) {
                 fitnessLevel += 67;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[23] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -643,6 +707,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[24].position.x + 1) > transform.position.x) {
                 fitnessLevel += 67;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[24] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -677,6 +742,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[25].position.x + 1) > transform.position.x) {
                 fitnessLevel += 70;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[25] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -712,6 +778,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[26].position.x + 1) > transform.position.x) {
                 fitnessLevel += 71;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[26] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -748,6 +815,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[27].position.x + 1) > transform.position.x) {
                 fitnessLevel += 73;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[27] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -785,6 +853,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[28].position.y + 1) > transform.position.y) {
                 fitnessLevel += 74;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[28] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -823,6 +892,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[29].position.y + 1) > transform.position.y) {
                 fitnessLevel += 76;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[29] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -862,6 +932,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[30].position.y + 1) > transform.position.y) {
                 fitnessLevel += 82;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[30] = current;
         } else if (passedMileStones[0]
                 && passedMileStones[1]
@@ -902,6 +973,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[31].position.y + 1) > transform.position.y) {
                 fitnessLevel += 88;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[31] = current;
         } else if (passedMileStones[0]
                  && passedMileStones[1]
@@ -943,6 +1015,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[32].position.y + 1) > transform.position.y) {
                 fitnessLevel += 95;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[32] = current;
         } else if (passedMileStones[0]
                  && passedMileStones[1]
@@ -985,6 +1058,7 @@ public class MissileControlHard : MonoBehaviour {
               && (mileStones[33].position.y + 1) > transform.position.y) {
                 fitnessLevel += 97;
             }
+            fitness += fitnessLevel;
             currentAtMilestone[33] = current;
         }
     }
@@ -998,7 +1072,7 @@ public class MissileControlHard : MonoBehaviour {
             currentFitness *= 1.5;
         }
         if (!crashed) {
-            fitness += fitnessLevel;
+            //fitness += fitnessLevel;
         }
 
     }

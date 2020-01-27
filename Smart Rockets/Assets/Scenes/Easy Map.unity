@@ -7555,6 +7555,7 @@ GameObject:
   m_Component:
   - component: {fileID: 2030492936}
   - component: {fileID: 2030492935}
+  - component: {fileID: 2030492937}
   m_Layer: 0
   m_Name: Main
   m_TagString: Main
@@ -7606,6 +7607,31 @@ Transform:
   m_Father: {fileID: 0}
   m_RootOrder: 2
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2030492937
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2030492934}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2c85c25db3673e94383a94556b3b4699, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  numRockets: 100
+  rocketPrefab: {fileID: 7556408073399047282, guid: 120e2f31012de914b84a145cafe4128e,
+    type: 3}
+  speed: 6
+  goalTransform: {fileID: 1162473529}
+  startPos: {fileID: 1445458437}
+  mileStone: {fileID: 918907677}
+  currentGen: 1
+  currentRange: 0
+  finishedTraining: 0
+  slerpRate: 5
+  mutationRate: 2
+  startSimulationBool: 0
 --- !u!1 &2092437492
 GameObject:
   m_ObjectHideFlags: 0

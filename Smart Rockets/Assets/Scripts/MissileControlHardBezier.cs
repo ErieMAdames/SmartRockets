@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using System;
 
-public class MissileControlHard : MonoBehaviour {
+public class MissileControlHardBezier : MonoBehaviour {
     // Start is called before the first frame update
     [SerializeField]
     public float speed;
@@ -11,8 +11,8 @@ public class MissileControlHard : MonoBehaviour {
     private int count;
     Rigidbody2D rb;
     public bool isReady;
-    public float[] thrusterLeftForces;
-    public float[] thrusterRightForces;
+    public Vector3[] path;
+    public Vector3[] desiredPath;
     public int current;
     public Transform goalTransform;
     public double fitness;
@@ -28,6 +28,10 @@ public class MissileControlHard : MonoBehaviour {
     private bool exploded;
     public int numGenes;
     public float[] crashPos;
+    private bool coroutineAllowed;
+    public GameObject eagle;
+    private LinkedList<GameObject> eagles;
+    public float currentM;
 
 
     void Awake() {
@@ -51,6 +55,9 @@ public class MissileControlHard : MonoBehaviour {
         }
         exploded = false;
         crashPos = new float[2];
+        coroutineAllowed = true;
+        Draw();
+        setFitness();
     }
 
     void OnCollisionEnter2D(Collision2D collision) {
@@ -64,8 +71,9 @@ public class MissileControlHard : MonoBehaviour {
             crashPos[1] = transform.position.y;
             fitness *= .50;
             crashed = true;
+            finished = true;
             rb.freezeRotation = true;
-            GetComponentInChildren<MeshRenderer>().enabled = false;
+            GetComponent<MeshRenderer>().enabled = false;
             if (!exploded) {
                 exploded = true;
                 ParticleSystem[] ps = GetComponentsInChildren<ParticleSystem>();
@@ -73,7 +81,7 @@ public class MissileControlHard : MonoBehaviour {
                     child.Stop();
                     child.Clear();
                 }
-                GameObject expl = Instantiate(explosion, transform.position + transform.up * .5f, Quaternion.identity) as GameObject;
+                GameObject expl = Instantiate(explosion, transform.position, Quaternion.identity) as GameObject;
                 Destroy(expl, 1);
             }
         }
@@ -81,7 +89,8 @@ public class MissileControlHard : MonoBehaviour {
             fitness *= 4;
             reachedGoal = true;
             crashed = true;
-            GetComponentInChildren<MeshRenderer>().enabled = false;
+            finished = true;
+            GetComponent<MeshRenderer>().enabled = false;
             if (!exploded) {
                 exploded = true;
                 ParticleSystem[] ps = GetComponentsInChildren<ParticleSystem>();
@@ -89,35 +98,93 @@ public class MissileControlHard : MonoBehaviour {
                     child.Stop();
                     child.Clear();
                 }
-                GameObject expl = Instantiate(explosion, transform.position + transform.up * .5f, Quaternion.identity) as GameObject;
+                GameObject expl = Instantiate(explosion, transform.position, Quaternion.identity) as GameObject;
                 Destroy(expl, 1);
             }
         }
     }
 
     // Update is called once per frame
-    void Update() {
-        if (isReady && !crashed) {
-            rb.velocity = transform.up * speed;
-            if (current < numGenes && count % 5 == 0) {
-                current++;  //this runs 50 times in total
+    private IEnumerator travel(int route) {
+        coroutineAllowed = false;
+        float t = 0f;
+        Debug.Log(path.Length);
+        for (int i = 1; i < path.Length; i++) {
+            while (t < 1) {
+                t += Time.deltaTime * .001f;
+                Vector3 newPos = (1 - t) * path[i - 1] +
+                    t * path[i];
+                if (Vector3.Distance(newPos, transform.position) > .3f) {
+                    float x = newPos.x - transform.position.x;
+                    float y = newPos.y - transform.position.y;
+                    float angle = (float)(Math.Atan2(y, x) * (180 / Math.PI) - 90);
+                    Quaternion target = Quaternion.Euler(0, 0, (float)angle);
+                    transform.rotation = target;
+                    transform.position = newPos;
+                    //if (!crashed && current < numGenes) {
+                    //    calculateFitness();
+                    //}
+                    yield return new WaitForEndOfFrame();
+                }
             }
-            count++;
+            t = 0;
         }
-        if (current < numGenes) {
-            float x = -thrusterLeftForces[current] + thrusterRightForces[current];
-            float y = thrusterLeftForces[current] + thrusterRightForces[current];
-            double angle = Math.Atan2(y, x) * (180 / Math.PI) - 90;
-            Quaternion target = Quaternion.Euler(0, 0, transform.eulerAngles.z + (float)angle);
-            transform.rotation = Quaternion.Slerp(transform.rotation, target, Time.deltaTime * slerpRate);
-        }
-        if (crashed || current >= numGenes) {
-            finished = true;
-        }
-        if (!finished) {
-            calculateFitness();
+        current++;
+        coroutineAllowed = true;
+    }
+    public void Draw() {
+        eagles = new LinkedList<GameObject>();
+        GameObject g = Instantiate(eagle, path[1], Quaternion.identity);
+        eagles.AddLast(g);
+        for (int i = 1; i < path.Length; i++) {
+            g = Instantiate(eagle, path[i], Quaternion.identity) as GameObject;
+            eagles.AddLast(g);
+            for (float t = 0; t < 1; t += .1f) {
+                Vector3 newPos = (1 - t) * path[i - 1] +
+                    t * path[i];
+                g = Instantiate(eagle, newPos, Quaternion.identity);
+                eagles.AddLast(g);
+            }
+
         }
     }
+    void Update() {
+        if (current < 1) {
+            current++;
+        } else {
+            finished = true;
+            foreach (GameObject o in eagles) {
+                Destroy(o);
+            }
+        }
+        ////currentM = currentMilestone();
+        //if (isReady && !crashed && current < numGenes) {
+        //    if (coroutineAllowed) {
+        //        StartCoroutine(travel(current));
+        //    }
+        //}
+        ////if (crashed || current >= numGenes) {
+        ////    finished = true;
+        ////    calculateFitness();
+        ////}
+    }
+    float currentMilestone() {
+        int ms = 0;
+        float minDist = Mathf.Infinity;
+        for (int i = 0; i < mileStones.Length; i++) {
+            float dist = Vector3.Distance(mileStones[i].position, transform.position);
+            if (dist < minDist) {
+                minDist = dist;
+                ms = i;
+            }
+        }
+        int[] arr = new int[] { 2, 3, 4, 5, 6, 7, 8, 9, 10,
+            11, 15, 18, 19, 22, 23, 24, 27, 35,
+            40, 70, 90, 100, 115, 120, 125, 130,
+            135, 140, 145, 150, 170, 185, 200, 210 };
+        return arr[ms];
+    }
+
     void getFitnessLevel() {
         if (!passedMileStones[0]
             && mileStones[0].position.y < transform.position.y) {
@@ -133,7 +200,7 @@ public class MissileControlHard : MonoBehaviour {
             && mileStones[1].position.y < transform.position.y) {
             passedMileStones[1] = true;
             fitnessLevel = 3;
-            if(mileStones[1].position.x < transform.position.x
+            if (mileStones[1].position.x < transform.position.x
             && (mileStones[1].position.x + 1) > transform.position.x) {
                 fitnessLevel += 1;
             }
@@ -993,13 +1060,20 @@ public class MissileControlHard : MonoBehaviour {
         double dist = Math.Sqrt(Math.Pow((double)(transform.position.x - goalTransform.position.x), 2) +
             Math.Pow((double)(transform.position.y - goalTransform.position.y), 2));
         getFitnessLevel();
-        double currentFitness = maxDist - dist;
         if (dist < 1) {
-            currentFitness *= 1.5;
+            fitness *= 1.5;
         }
         if (!crashed) {
-            fitness += fitnessLevel;
+            //fitness += fitnessLevel;
+            fitness = currentMilestone();
         }
 
+    }
+    void setFitness() {
+        float fit = 0;
+        for (int i = 0; i < path.Length; i++) {
+            fit += Vector3.Distance(path[i], desiredPath[i]);
+        }
+        fitness = 500 - fit;
     }
 }
